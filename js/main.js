@@ -7,12 +7,16 @@ const API = {
     `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&countryCode=${code}&count=1&language=en&format=json`,
   weather: (lat, lon) =>
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,uv_index&hourly=temperature_2m,weather_code,precipitation_probability&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,uv_index_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant&timezone=auto`,
-  events: (city, code) =>
-    `https://app.ticketmaster.com/discovery/v2/events.json?apikey=VwECw2OiAzxVzIqnwmKJUG41FbeXJk1y&city=${encodeURIComponent(city)}&countryCode=${code}&size=20&sort=date,asc`,
-  rates: (base) => `https://v6.exchangerate-api.com/v6/805842951e5953ad31497176/latest/${base}`,
+  events: (city, code) => {
+    const key = window.WANDERLUST_CONFIG?.ticketmasterApiKey || "";
+    if (!key) return null;
+    return `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${encodeURIComponent(key)}&city=${encodeURIComponent(city)}&countryCode=${code}&size=20&sort=date,asc`;
+  },
+  rates: (base) => `https://api.frankfurter.dev/v2/rates?base=${encodeURIComponent(base)}`,
   sun: (lat, lon, date) =>
     `https://api.sunrise-sunset.org/json?lat=${lat}&lng=${lon}&date=${date}&formatted=0`,
 };
+
 
 const CURRENCIES = {
   USD: "US Dollar", EUR: "Euro", GBP: "British Pound", EGP: "Egyptian Pound",
@@ -195,16 +199,30 @@ async function applySelection(showToast = true) {
   localStorage.setItem("wanderlustSelection", JSON.stringify(state.selected));
   showLoading("Loading destination data...");
 
-  try {
-    await Promise.all([loadCountryInfo(), loadCoordinates(), loadHolidays(), loadLongWeekends()]);
-    await Promise.allSettled([loadEvents(), loadWeather(), loadSunTimes()]);
-    renderAllSelectionViews();
-    if (showToast) toast(`Loaded ${countryName} - ${city}`, "success");
-  } catch (error) {
-    toast(error.message || "Something went wrong while loading destination data.", "error");
-  } finally {
-    hideLoading();
+  const results = await Promise.allSettled([
+    loadCountryInfo(),
+    loadCoordinates(),
+    loadHolidays(),
+    loadLongWeekends(),
+    loadEvents(),
+  ]);
+
+  if (state.coords) {
+    await Promise.allSettled([loadWeather(), loadSunTimes()]);
   }
+
+  renderAllSelectionViews();
+
+  const failed = results.filter((result) => result.status === "rejected");
+  if (showToast) {
+    toast(
+      failed.length
+        ? `Loaded ${countryName} - ${city} with ${failed.length} unavailable service(s).`
+        : `Loaded ${countryName} - ${city}`,
+      failed.length ? "info" : "success"
+    );
+  }
+  hideLoading();
 }
 
 function clearSelection() {
@@ -249,8 +267,13 @@ async function loadLongWeekends() {
 }
 
 async function loadEvents() {
+  const url = API.events(state.selected.city, state.selected.countryCode);
+  if (!url) {
+    state.events = [];
+    return;
+  }
   try {
-    const data = await fetchJson(API.events(state.selected.city, state.selected.countryCode));
+    const data = await fetchJson(url);
     state.events = data._embedded?.events || [];
   } catch {
     state.events = [];
@@ -570,8 +593,21 @@ async function convertCurrency() {
   const from = $("#currency-from")?.value || "USD";
   const to = $("#currency-to")?.value || "EGP";
   try {
-    if (!state.rates || state.rates.base_code !== from) state.rates = await fetchJson(API.rates(from));
-    const rate = state.rates.conversion_rates?.[to];
+    if (!state.rates || state.rates.base !== from) {
+      const data = await fetchJson(API.rates(from));
+      const conversion_rates = Object.fromEntries(
+        (Array.isArray(data) ? data : []).map((item) => [item.quote, item.rate])
+      );
+      state.rates = {
+        base: from,
+        conversion_rates,
+        date: data?.[0]?.date || null,
+      };
+    }
+
+    const rate = from === to ? 1 : Number(state.rates.conversion_rates?.[to]);
+    if (!Number.isFinite(rate)) throw new Error("Exchange rate unavailable.");
+
     const converted = amount * rate;
     $("#currency-result").innerHTML = `
       <div class="conversion-display">
@@ -580,12 +616,12 @@ async function convertCurrency() {
         <div class="conversion-to"><span class="amount">${money(converted)}</span><span class="currency-code">${to}</span></div>
       </div>
       <div class="exchange-rate-info">
-        <p>1 ${from} = ${Number(rate).toFixed(6)} ${to}</p>
-        <small>Last updated: ${state.rates.time_last_update_utc ? formatDate(state.rates.time_last_update_utc) : "Live rate"}</small>
+        <p>1 ${from} = ${rate.toFixed(6)} ${to}</p>
+        <small>Latest available rate: ${state.rates.date ? formatDate(state.rates.date) : "Current"}</small>
       </div>`;
     renderPopularCurrencies(from);
-  } catch {
-    toast("Currency rates are unavailable right now.", "error");
+  } catch (error) {
+    toast(error.message || "Currency rates are unavailable right now.", "error");
   }
 }
 
@@ -717,11 +753,44 @@ function bindSaveButtons(root) {
   });
 }
 
-function fetchJson(url) {
-  return fetch(url).then((res) => {
-    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-    return res.json();
-  });
+async function fetchJson(url, options = {}) {
+  if (!url) throw new Error("API endpoint is not configured.");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeout || 12000);
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...(options.headers || {}),
+      },
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json")
+      ? await res.json()
+      : await res.text();
+
+    if (!res.ok) {
+      const message =
+        typeof payload === "object" && payload?.message
+          ? payload.message
+          : typeof payload === "object" && payload?.error
+            ? payload.error
+            : `Request failed (${res.status})`;
+      throw new Error(message);
+    }
+
+    return payload;
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Request timed out.");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function showLoading(text = "Loading...") {
