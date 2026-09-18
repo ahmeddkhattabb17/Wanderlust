@@ -2,7 +2,7 @@ const API = {
   countries: "https://date.nager.at/api/v3/AvailableCountries",
   holidays: (year, code) => `https://date.nager.at/api/v3/PublicHolidays/${year}/${code}`,
   longWeekends: (year, code) => `https://date.nager.at/api/v3/LongWeekend/${year}/${code}`,
-  countryInfo: (code) => `https://restcountries.com/v3.1/alpha/${code}`,
+  countryInfo: (code) => `https://api.restcountries.com/countries/v5/codes.alpha_2/${code}?api-key=rc_live_demo`,
   geocode: (city, code) =>
     `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&countryCode=${code}&count=1&language=en&format=json`,
   weather: (lat, lon) =>
@@ -172,7 +172,8 @@ async function updateCityOptions() {
   let cities = CITY_FALLBACKS[code] || [];
   try {
     if (code) {
-      const [info] = await fetchJson(API.countryInfo(code));
+      const data = await fetchJson(API.countryInfo(code));
+      const info = data?.data?.objects?.[0] || data?.data?.[0] || data?.[0] || data;
       const capitals = info?.capital || [];
       cities = [...new Set([...capitals, ...cities])];
       if (!cities.length && name) cities = [name];
@@ -239,7 +240,9 @@ function clearSelection() {
 }
 
 async function loadCountryInfo() {
-  const [info] = await fetchJson(API.countryInfo(state.selected.countryCode));
+  const data = await fetchJson(API.countryInfo(state.selected.countryCode));
+  const info = data?.data?.objects?.[0] || data?.data?.[0] || data?.[0] || data;
+  if (!info || !info.name) throw new Error("Country information is unavailable.");
   state.countryInfo = info;
 }
 
