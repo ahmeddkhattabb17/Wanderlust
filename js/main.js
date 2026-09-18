@@ -1,6 +1,6 @@
 const API = {
   countries: "https://date.nager.at/api/v3/AvailableCountries",
-  holidays: (year, code) => `https://date.nager.at/api/v3/PublicHolidays/${year}/${code}`,
+  holidays: (year, code) => `https://nagerholidays.com/api/v4/Holidays/${code}/${year}`,
   longWeekends: (year, code) => `https://date.nager.at/api/v3/LongWeekend/${year}/${code}`,
   countryInfo: (code) => `https://restcountries.com/v3.1/alpha/${code}`,
   geocode: (city, code) =>
@@ -406,10 +406,10 @@ function renderHolidays() {
           <button class="holiday-action-btn ${isSaved(plan.id) ? "saved" : ""}" data-save='${jsonAttr(plan)}'><i class="${isSaved(plan.id) ? "fa-solid" : "fa-regular"} fa-heart"></i></button>
         </div>
         <h3>${escapeHtml(holiday.name)}</h3>
-        <p class="holiday-name">${escapeHtml(holiday.localName || holiday.name)}</p>
+        <p class="holiday-name">${escapeHtml(holiday.name)}</p>
         <div class="holiday-card-footer">
           <span class="holiday-day-badge"><i class="fa-regular fa-calendar"></i> ${weekday(date)}</span>
-          <span class="holiday-type-badge">${escapeHtml(holiday.types?.[0] || "Public")}</span>
+          <span class="holiday-type-badge">${escapeHtml(holiday.holidayTypes?.[0] || "Public")}</span>
         </div>
       </div>`;
   }).join("");
