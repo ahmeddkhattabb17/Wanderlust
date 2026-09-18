@@ -1,5 +1,6 @@
 const API = {
   countries: "https://date.nager.at/api/v3/AvailableCountries",
+  localCountries: "data/countries.json",
   holidays: (year, code) => `https://date.nager.at/api/v3/PublicHolidays/${year}/${code}`,
   longWeekends: (year, code) => `https://date.nager.at/api/v3/LongWeekend/${year}/${code}`,
   countryInfo: (code) => `https://restcountries.com/v3.1/alpha/${encodeURIComponent(code)}`,
@@ -43,6 +44,7 @@ const CITY_FALLBACKS = {
 
 const state = {
   countries: [],
+  countryData: [],
   selected: JSON.parse(localStorage.getItem("wanderlustSelection") || "null") || {
     countryCode: "EG",
     countryName: "Egypt",
@@ -71,6 +73,7 @@ async function init() {
   updateClock();
   setInterval(updateClock, 1000);
   renderPlansMeta();
+  await loadLocalCountryData();
   await loadCountries();
   await syncSelectionInputs();
   await applySelection(false);
@@ -124,6 +127,33 @@ function bindEvents() {
     });
   });
 }
+async function loadLocalCountryData() {
+  try {
+    state.countryData = await fetchJson(API.localCountries);
+  } catch {
+    state.countryData = [];
+  }
+}
+
+function getLocalCountry(code) {
+  return state.countryData.find((country) => country.cca2 === code);
+}
+
+function localCountryInfo(code) {
+  const country = getLocalCountry(code);
+  if (!country) return null;
+
+  return {
+    ...country,
+    flags: { png: flagUrl(code, 160) },
+    continents: country.region ? [country.region] : [],
+    timezones: [],
+    maps: {
+      googleMaps: `https://www.google.com/maps/search/${encodeURIComponent(country.name?.common || state.selected?.countryName || code)}`,
+    },
+  };
+}
+
 async function loadCountries() {
   try {
     state.countries = await fetchJson(API.countries);
@@ -169,18 +199,21 @@ async function updateCityOptions() {
   const code = $("#global-country").value;
   const option = $("#global-country").selectedOptions[0];
   const name = option?.dataset.name || option?.textContent?.trim() || "";
-  let cities = CITY_FALLBACKS[code] || [];
+  const local = getLocalCountry(code);
+  let cities = [...new Set([...(local?.capital || []), ...(CITY_FALLBACKS[code] || [])])];
+
   try {
     if (code) {
       const data = await fetchJson(API.countryInfo(code));
       const info = Array.isArray(data) ? data[0] : data;
       const capitals = info?.capital || [];
       cities = [...new Set([...capitals, ...cities])];
-      if (!cities.length && name) cities = [name];
     }
   } catch {
-    if (!cities.length && name) cities = [name];
+    // Local country metadata keeps city selection working when the remote API is unavailable.
   }
+
+  if (!cities.length && name) cities = [name];
 
   $("#global-city").innerHTML = cities.map((city) => `<option value="${escapeHtml(city)}">${escapeHtml(city)}</option>`).join("");
 }
@@ -240,10 +273,20 @@ function clearSelection() {
 }
 
 async function loadCountryInfo() {
-  const data = await fetchJson(API.countryInfo(state.selected.countryCode));
-  const info = Array.isArray(data) ? data[0] : data;
-  if (!info || !info.name) throw new Error("Country information is unavailable.");
-  state.countryInfo = info;
+  try {
+    const data = await fetchJson(API.countryInfo(state.selected.countryCode));
+    const info = Array.isArray(data) ? data[0] : data;
+    if (info?.name) {
+      state.countryInfo = info;
+      return;
+    }
+  } catch {
+    // Fall back to the bundled country dataset below.
+  }
+
+  const fallback = localCountryInfo(state.selected.countryCode);
+  if (!fallback) throw new Error("Country information is unavailable.");
+  state.countryInfo = fallback;
 }
 
 async function loadCoordinates() {
