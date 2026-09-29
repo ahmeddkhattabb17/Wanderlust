@@ -2,24 +2,24 @@
 
 A travel-focused frontend project designed around destination discovery and an immersive travel experience.
 
-## ✨ Features
+## Features
 - Travel and destination presentation
 - Image-led sections
 - Responsive layouts
 - Navigation and content sections
 - Mobile-friendly UI
 
-## 🛠️ Tech Stack
+## Tech Stack
 - HTML5
 - CSS3
 - JavaScript
 - Responsive Web Design
 
-## 🚀 Run Locally
+## Run Locally
 Open the project's main HTML file or serve it through a local static server.
 
-## 🎯 Portfolio Focus
+## Portfolio Focus
 Visual storytelling, responsive layout composition, destination-focused cards, and travel-brand presentation.
 
-## 👤 Author
+## Author
 Ahmed Khattab — Frontend Developer
